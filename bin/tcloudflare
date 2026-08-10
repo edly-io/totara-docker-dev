@@ -1,0 +1,35 @@
+#!/bin/bash
+
+script_path="$( cd "$(dirname "$0")" ; pwd -P )"
+project_path="$( cd $script_path && cd ..; pwd -P )"
+
+source "$project_path/tools/check_for_update.sh"
+
+set -a; source "$project_path/.env"; set +a
+
+if [[ -z "$*" ]]; then
+    echo "Helper for using Cloudflare Tunnel with your Totara site.
+
+cloudflared must be installed and on your PATH.
+See: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+
+Usage Examples:
+  tcloudflare totara84                          // Quick tunnel (random *.trycloudflare.com URL)
+  tcloudflare sitename.totara84                 // Tunnel to a multi-site
+  tcloudflare sitename.totara84.debug           // Same as above, but also enables XDebug
+"
+    exit;
+fi
+
+site="$1"
+shift
+
+# Append .localhost domain suffix if it's not specified
+if [[ ! $site == *.localhost ]]; then
+  site="$site.localhost"
+fi
+
+cloudflared tunnel --url "https://localhost:8443" \
+  --http-host-header "$site" \
+  --no-tls-verify \
+  "$@"

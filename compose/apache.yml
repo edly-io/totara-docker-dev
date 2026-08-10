@@ -12,7 +12,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      - "8443:8443" # ngrok only
+      - "8443:8443" # remote tunnel (ngrok, Cloudflare Tunnel, etc.)
     volumes:
       - ./apache/entrypoint.sh:/totara-entrypoint.sh
       - ./apache/httpd.conf:/usr/local/apache2/conf/httpd.conf

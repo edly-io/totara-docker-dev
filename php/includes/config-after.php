@@ -245,14 +245,31 @@ if ($DOCKER_DEV->major_version > 18) {
 
 // wwwroot setup
 
-// Matches URL with ngrok.app, ngrok-free.app, ngrok.dev, ngrok-free.dev or ngrok.pizza
-$ngrok_hostname_regex = '/\b(?:ngrok-free\.app|ngrok\.app|ngrok-free\.dev|ngrok\.dev|ngrok\.pizza)\b/';
-if (!empty($_SERVER['HTTP_X_FORWARDED_HOST']) && preg_match($ngrok_hostname_regex, $_SERVER['HTTP_X_FORWARDED_HOST'])) {
-    // Request came via ngrok
+// Tunnel domain patterns — add new services here as needed.
+// Sites can extend via $DOCKER_DEV->custom_tunnel_domains (set BEFORE including this file).
+$tunnel_domain_patterns = [
+    'ngrok-free\.app',    // ngrok
+    'ngrok\.app',
+    'ngrok-free\.dev',
+    'ngrok\.dev',
+    'ngrok\.pizza',
+    'trycloudflare\.com', // Cloudflare Quick Tunnels
+];
+
+if (!empty($DOCKER_DEV->custom_tunnel_domains) && is_array($DOCKER_DEV->custom_tunnel_domains)) {
+    foreach ($DOCKER_DEV->custom_tunnel_domains as $domain) {
+        $tunnel_domain_patterns[] = preg_quote($domain, '/');
+    }
+}
+
+$remote_tunnel_regex = '/\b(?:' . implode('|', $tunnel_domain_patterns) . ')\b/';
+
+if (!empty($_SERVER['HTTP_X_FORWARDED_HOST']) && preg_match($remote_tunnel_regex, $_SERVER['HTTP_X_FORWARDED_HOST'])) {
+    // Request came via a remote tunnel (ngrok, Cloudflare Tunnel, etc.)
     $_SERVER['HTTP_HOST'] = $_SERVER['HTTP_X_FORWARDED_HOST'];
     $CFG->wwwroot = 'https://' . $_SERVER['HTTP_HOST'];
-} else if (!empty($_SERVER['HTTP_X_ORIGINAL_HOST']) && preg_match($ngrok_hostname_regex, $_SERVER['HTTP_X_ORIGINAL_HOST'])) {
-    // Request came via ngrok
+} else if (!empty($_SERVER['HTTP_X_ORIGINAL_HOST']) && preg_match($remote_tunnel_regex, $_SERVER['HTTP_X_ORIGINAL_HOST'])) {
+    // Request came via a remote tunnel
     $_SERVER['HTTP_HOST'] = $_SERVER['HTTP_X_ORIGINAL_HOST'];
     $CFG->wwwroot = 'https://' . $_SERVER['HTTP_HOST'];
 } else if (!empty($_SERVER['HTTP_HOST']) && !empty($_SERVER['REQUEST_SCHEME'])) {
