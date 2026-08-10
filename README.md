@@ -1,5 +1,27 @@
 # [![Totara](https://raw.githubusercontent.com/wiki/totara/totara-docker-dev/images/totara-small.png)](https://totaralearning.com) _Totara Docker Dev:_ A Totara Development Environment
 
+> **This is a fork of [totara/totara-docker-dev](https://github.com/totara/totara-docker-dev) maintained by [Edly](https://github.com/edly-io) with additional customisations for our development workflow.**
+
+## Syncing with Upstream
+
+To pull in the latest changes from the original upstream repository:
+
+```bash
+# Fetch the latest upstream changes (does not modify your files)
+git fetch upstream
+
+# Merge upstream changes into your current branch
+git merge upstream/master
+```
+
+If you haven't added the upstream remote yet:
+
+```bash
+git remote add upstream git@github.com:totara/totara-docker-dev.git
+```
+
+---
+
 [![Release](https://img.shields.io/github/v/release/totara/totara-docker-dev)](../../releases)
 [![Release Date](https://img.shields.io/github/release-date/totara/totara-docker-dev)](../../releases)
 [![Issues](https://img.shields.io/github/issues/totara/totara-docker-dev)](../../issues)
