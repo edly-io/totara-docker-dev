@@ -2,9 +2,23 @@
 
 > **This is a fork of [totara/totara-docker-dev](https://github.com/totara/totara-docker-dev) maintained by [Edly](https://github.com/edly-io) with additional customisations for our development workflow.**
 
+## Getting Started
+
+Clone this fork:
+
+```bash
+git clone git@github.com:edly-io/totara-docker-dev.git
+```
+
 ## Syncing with Upstream
 
-To pull in the latest changes from the original upstream repository:
+If you need to pull in the latest changes from the original upstream repository, first add the upstream remote (one-time setup):
+
+```bash
+git remote add upstream git@github.com:totara/totara-docker-dev.git
+```
+
+Then fetch and merge whenever needed:
 
 ```bash
 # Fetch the latest upstream changes (does not modify your files)
@@ -12,12 +26,6 @@ git fetch upstream
 
 # Merge upstream changes into your current branch
 git merge upstream/master
-```
-
-If you haven't added the upstream remote yet:
-
-```bash
-git remote add upstream git@github.com:totara/totara-docker-dev.git
 ```
 
 ---
