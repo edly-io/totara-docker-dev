@@ -1,0 +1,143 @@
+#!/bin/bash
+#
+# tcomposer — Composer wrapper that safely toggles Docker overlay volumes per-site per-plugin.
+#
+# When Docker bind-mounts overlay a plugin's Composer install paths, running
+# composer remove/require/update inside the container would delete or conflict
+# with the source files on the host. This script:
+#   1. Comments out the overlay lines for the plugin+site in totara-composer.yml
+#   2. Recreates the affected containers (so the overlay is gone)
+#   3. Runs the Composer command (now operating on the real dist copy, not the mount)
+#   4. Restores the overlay lines and recreates containers (require/update only)
+#
+# Usage (run from within a Totara site directory):
+#   tcomposer remove edly-io/local_todo
+#   tcomposer require edly-io/local_todo:^1.0
+#   tcomposer update edly-io/local_todo
+#   tcomposer require edly-io/local_todo:^1.0 --no-dev   (extra args passed through)
+#
+# Place in : ~/projects/totara-docker-dev/custom/
+# Activate : chmod +x ~/projects/totara-docker-dev/custom/tcomposer
+# Optional  : add totara-docker-dev/custom/ to your $PATH in ~/.zshrc
+
+# ── Standard docker-dev path boilerplate ──────────────────────────────────────
+script_path="$( cd "$(dirname "$0")" ; pwd -P )"
+project_path="$( cd "$script_path" && cd ..; pwd -P )"
+set -a; source "$project_path/.env"; set +a
+bin="$project_path/bin"
+
+OVERLAY_FILE="$script_path/totara-composer.yml"
+
+# ── Containers that carry overlay volumes ─────────────────────────────────────
+# Add php-8.4-debug here if you regularly run it.
+CONTAINERS=(php-8.4 nodejs nginx)
+
+# ── Validate arguments ────────────────────────────────────────────────────────
+OPERATION="${1:-}"
+PACKAGE="${2:-}"
+
+if [[ -z "$OPERATION" || -z "$PACKAGE" ]]; then
+    echo "Usage: tcomposer <remove|require|update> <vendor/package> [extra composer args...]"
+    echo "       Must be run from within a Totara site directory."
+    exit 1
+fi
+
+shift 2
+EXTRA_ARGS=("$@")   # any remaining args are passed straight through to Composer
+
+# ── Derive site name from current working directory ───────────────────────────
+# Strips LOCAL_SRC prefix from PWD, then takes the first path segment.
+# e.g. PWD=/Users/me/projects/totara-sites/demo-totara-txp → demo-totara-txp
+sub_path="${PWD//$LOCAL_SRC/}"
+SITE_NAME="${sub_path#/}"
+SITE_NAME="${SITE_NAME%%/*}"
+
+if [[ -z "$SITE_NAME" ]] || [[ ! -f "$LOCAL_SRC/$SITE_NAME/composer.json" ]]; then
+    echo "Error: tcomposer must be run from within a Totara site directory."
+    echo "       Could not determine site name from PWD: $PWD"
+    exit 1
+fi
+
+# ── Derive plugin short-name from package argument ────────────────────────────
+# e.g. edly-io/local_todo → local_todo
+PLUGIN_NAME="${PACKAGE%%:*}"   # strip any :version constraint first
+PLUGIN_NAME="${PLUGIN_NAME##*/}"
+
+# ── Pattern that scopes changes to THIS plugin in THIS site only ──────────────
+# Each volume line looks like:
+#   - ${HOME}/.../local_todo:${REMOTE_SRC}/demo-totara-txp/server/local/todo
+#                  ↑ plugin name              ↑ site name
+# So a pattern matching both on a single line uniquely identifies the right lines.
+PATTERN="${PLUGIN_NAME}.*${SITE_NAME}"
+
+# ── Helper functions ──────────────────────────────────────────────────────────
+_comment_overlays() {
+    sed -i.bak "/${PATTERN}/s|^      - |      # - |" "$OVERLAY_FILE"
+    rm -f "${OVERLAY_FILE}.bak"
+    echo "[tcomposer] Overlays disabled  : '${PLUGIN_NAME}' in '${SITE_NAME}'"
+}
+
+_restore_overlays() {
+    sed -i.bak "/${PATTERN}/s|^      # - |      - |" "$OVERLAY_FILE"
+    rm -f "${OVERLAY_FILE}.bak"
+    echo "[tcomposer] Overlays restored  : '${PLUGIN_NAME}' in '${SITE_NAME}'"
+}
+
+_recreate_containers() {
+    echo "[tcomposer] Recreating containers: ${CONTAINERS[*]}"
+    # tup detects the YAML change and recreates affected containers automatically.
+    "$bin/tup" "${CONTAINERS[@]}"
+}
+
+_abort() {
+    # Disable trap to prevent recursion if restore/recreate also errors.
+    trap - ERR INT TERM
+    echo ""
+    echo "[tcomposer] Interrupted — restoring overlays and recreating containers..."
+    _restore_overlays
+    _recreate_containers
+    echo "[tcomposer] State restored. Exiting."
+    exit 1
+}
+
+trap '_abort' ERR INT TERM
+
+# ── Early exit: no overlay lines for this plugin+site ────────────────────────
+if ! grep -q "$PATTERN" "$OVERLAY_FILE"; then
+    echo "[tcomposer] No overlay lines found for '${PLUGIN_NAME}' in '${SITE_NAME}' in:"
+    echo "            ${OVERLAY_FILE}"
+    echo "[tcomposer] Running Composer without overlay management."
+    echo ""
+    texec php-8.4 composer "${OPERATION}" "${PACKAGE}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
+    exit 0
+fi
+
+# ── Summary ───────────────────────────────────────────────────────────────────
+echo ""
+echo "[tcomposer] Operation  : ${OPERATION}"
+echo "[tcomposer] Package    : ${PACKAGE}"
+echo "[tcomposer] Site       : ${SITE_NAME}"
+echo ""
+
+# ── Step 1: Disable overlays and recreate containers ─────────────────────────
+_comment_overlays
+_recreate_containers
+echo ""
+
+# ── Step 2: Run Composer ──────────────────────────────────────────────────────
+texec php-8.4 composer "${OPERATION}" "${PACKAGE}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
+echo ""
+
+# ── Step 3: Restore overlays (require/update only; leave disabled for remove) ─
+if [[ "$OPERATION" == "remove" ]]; then
+    echo "[tcomposer] Package removed."
+    echo "[tcomposer] Overlay lines left disabled in: ${OVERLAY_FILE}"
+    echo "[tcomposer] Delete them manually when no longer needed."
+else
+    _restore_overlays
+    _recreate_containers
+fi
+
+trap - ERR INT TERM
+echo ""
+echo "[tcomposer] Done."
