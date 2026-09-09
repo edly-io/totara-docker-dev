@@ -11,6 +11,7 @@
 #   4. Restores the overlay lines and recreates containers (require/update only)
 #
 # Usage (run from within a Totara site directory):
+#   cd ~/projects/totara-sites/demo-totara-txp
 #   tcomposer remove edly-io/local_todo
 #   tcomposer require edly-io/local_todo:^1.0
 #   tcomposer update edly-io/local_todo
