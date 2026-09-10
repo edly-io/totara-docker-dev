@@ -12,10 +12,11 @@
 #
 # Usage (run from within a Totara site directory):
 #   cd ~/projects/totara-sites/demo-totara-txp
-#   tcomposer remove edly-io/local_todo
-#   tcomposer require edly-io/local_todo:^1.0
-#   tcomposer update edly-io/local_todo
-#   tcomposer require edly-io/local_todo:^1.0 --no-dev   (extra args passed through)
+#   tcomposer php-8.4 remove edly-io/local_todo
+#   tcomposer php-8.3 require edly-io/local_todo:^1.0
+#   tcomposer php-8.4 update edly-io/local_todo
+#   tcomposer php-8.4 require edly-io/local_todo:^1.0 --no-dev   (extra args passed through)
+#   tcomposer php remove edly-io/local_todo   (php / php-debug auto-picks a site-compatible container, same as texec, but its better to be explicit about the version of PHP)
 #
 # Place in : ~/projects/totara-docker-dev/custom/
 # Activate : chmod +x ~/projects/totara-docker-dev/custom/tcomposer
@@ -29,21 +30,24 @@ bin="$project_path/bin"
 
 OVERLAY_FILE="$script_path/totara-composer.yml"
 
-# ── Containers that carry overlay volumes ─────────────────────────────────────
-# Add php-8.4-debug here if you regularly run it.
-CONTAINERS=(php-8.4 nodejs nginx)
-
 # ── Validate arguments ────────────────────────────────────────────────────────
-OPERATION="${1:-}"
-PACKAGE="${2:-}"
+PHP_CONTAINER="${1:-}"
+OPERATION="${2:-}"
+PACKAGE="${3:-}"
 
-if [[ -z "$OPERATION" || -z "$PACKAGE" ]]; then
-    echo "Usage: tcomposer <remove|require|update> <vendor/package> [extra composer args...]"
+if [[ -z "$PHP_CONTAINER" || -z "$OPERATION" || -z "$PACKAGE" ]]; then
+    echo "Usage: tcomposer <php-container> <remove|require|update> <vendor/package> [extra composer args...]"
+    echo "       e.g. tcomposer php-8.4 remove edly-io/local_todo"
     echo "       Must be run from within a Totara site directory."
     exit 1
 fi
 
-shift 2
+if [[ "$PHP_CONTAINER" != php* ]]; then
+    echo "Error: first argument must be a PHP container (e.g. php-8.4, php-8.3, php-8.4-debug, or php)."
+    exit 1
+fi
+
+shift 3
 EXTRA_ARGS=("$@")   # any remaining args are passed straight through to Composer
 
 # ── Derive site name from current working directory ───────────────────────────
@@ -58,6 +62,20 @@ if [[ -z "$SITE_NAME" ]] || [[ ! -f "$LOCAL_SRC/$SITE_NAME/composer.json" ]]; th
     echo "       Could not determine site name from PWD: $PWD"
     exit 1
 fi
+
+# If just 'php' or 'php-debug' is specified, resolve the site-compatible container (same as texec).
+if [[ "$PHP_CONTAINER" == "php" || "$PHP_CONTAINER" == "php-debug" ]]; then
+    php_container=($(php "$bin/helpers/php_container.php" "$LOCAL_SRC/$SITE_NAME"))
+    if [[ "$PHP_CONTAINER" == "php-debug" ]]; then
+        PHP_CONTAINER="${php_container[0]}-debug"
+    else
+        PHP_CONTAINER="${php_container[0]}"
+    fi
+    echo "[tcomposer] Using PHP container: ${PHP_CONTAINER}"
+fi
+
+# ── Containers that carry overlay volumes ─────────────────────────────────────
+CONTAINERS=("$PHP_CONTAINER" nodejs nginx)
 
 # ── Derive plugin short-name from package argument ────────────────────────────
 # e.g. edly-io/local_todo → local_todo
@@ -109,12 +127,13 @@ if ! grep -q "$PATTERN" "$OVERLAY_FILE"; then
     echo "            ${OVERLAY_FILE}"
     echo "[tcomposer] Running Composer without overlay management."
     echo ""
-    texec php-8.4 composer "${OPERATION}" "${PACKAGE}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
+    texec "$PHP_CONTAINER" composer "${OPERATION}" "${PACKAGE}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
     exit 0
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
+echo "[tcomposer] PHP        : ${PHP_CONTAINER}"
 echo "[tcomposer] Operation  : ${OPERATION}"
 echo "[tcomposer] Package    : ${PACKAGE}"
 echo "[tcomposer] Site       : ${SITE_NAME}"
@@ -126,7 +145,7 @@ _recreate_containers
 echo ""
 
 # ── Step 2: Run Composer ──────────────────────────────────────────────────────
-texec php-8.4 composer "${OPERATION}" "${PACKAGE}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
+texec "$PHP_CONTAINER" composer "${OPERATION}" "${PACKAGE}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
 echo ""
 
 # ── Step 3: Restore overlays (require/update only; leave disabled for remove) ─
