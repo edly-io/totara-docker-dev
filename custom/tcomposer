@@ -2,9 +2,12 @@
 #
 # tcomposer — Composer wrapper that safely toggles Docker overlay volumes per-site per-plugin.
 #
-# When Docker bind-mounts overlay a plugin's Composer install paths, running
-# composer remove/require/update inside the container would delete or conflict
-# with the source files on the host. This script:
+# For typical Packagist packages (no overlay mounts), this just runs Composer in
+# the chosen PHP container — no overlay edits and no container recreation.
+#
+# When Docker bind-mounts overlay a private-repo plugin's Composer install paths,
+# running composer remove/require/update inside the container would delete or
+# conflict with the source files on the host. For those packages this script:
 #   1. Comments out the overlay lines for the plugin+site in totara-composer.yml
 #   2. Recreates the affected containers (so the overlay is gone)
 #   3. Runs the Composer command (now operating on the real dist copy, not the mount)
@@ -16,6 +19,7 @@
 #   tcomposer php-8.3 require edly-io/local_todo:^1.0
 #   tcomposer php-8.4 update edly-io/local_todo
 #   tcomposer php-8.4 require edly-io/local_todo:^1.0 --no-dev   (extra args passed through)
+#   tcomposer php-8.4 require monolog/monolog                   (Packagist: Composer only)
 #   tcomposer php remove edly-io/local_todo   (php / php-debug auto-picks a site-compatible container, same as texec, but its better to be explicit about the version of PHP)
 #
 # Place in : ~/projects/totara-docker-dev/custom/
@@ -84,10 +88,11 @@ PLUGIN_NAME="${PLUGIN_NAME##*/}"
 
 # ── Pattern that scopes changes to THIS plugin in THIS site only ──────────────
 # Each volume line looks like:
-#   - ${HOME}/.../local_todo:${REMOTE_SRC}/demo-totara-txp/server/local/todo
-#                  ↑ plugin name              ↑ site name
-# So a pattern matching both on a single line uniquely identifies the right lines.
-PATTERN="${PLUGIN_NAME}.*${SITE_NAME}"
+#   - ${HOME}/.../totara-custom-plugins/local_todo:${REMOTE_SRC}/demo-totara-txp/server/local/todo
+#                                       ↑ plugin name              ↑ site name
+# Anchor on the custom-plugins directory so a Packagist package named e.g. "todo"
+# cannot match an overlay for "local_todo".
+PATTERN="totara-custom-plugins/${PLUGIN_NAME}[/:].*${SITE_NAME}"
 
 # ── Helper functions ──────────────────────────────────────────────────────────
 _comment_overlays() {
@@ -108,6 +113,10 @@ _recreate_containers() {
     "$bin/tup" "${CONTAINERS[@]}"
 }
 
+_run_composer() {
+    texec "$PHP_CONTAINER" composer "${OPERATION}" "${PACKAGE}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
+}
+
 _abort() {
     # Disable trap to prevent recursion if restore/recreate also errors.
     trap - ERR INT TERM
@@ -119,17 +128,16 @@ _abort() {
     exit 1
 }
 
-trap '_abort' ERR INT TERM
-
-# ── Early exit: no overlay lines for this plugin+site ────────────────────────
+# ── Packagist / no-overlay path: Composer only, no container recreation ──────
 if ! grep -q "$PATTERN" "$OVERLAY_FILE"; then
-    echo "[tcomposer] No overlay lines found for '${PLUGIN_NAME}' in '${SITE_NAME}' in:"
-    echo "            ${OVERLAY_FILE}"
-    echo "[tcomposer] Running Composer without overlay management."
+    echo "[tcomposer] No overlays for '${PLUGIN_NAME}' in '${SITE_NAME}' — running Composer only."
     echo ""
-    texec "$PHP_CONTAINER" composer "${OPERATION}" "${PACKAGE}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
-    exit 0
+    _run_composer
+    exit $?
 fi
+
+# Overlay mounts exist for this plugin+site; restore them if Composer is interrupted.
+trap '_abort' ERR INT TERM
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
@@ -145,7 +153,7 @@ _recreate_containers
 echo ""
 
 # ── Step 2: Run Composer ──────────────────────────────────────────────────────
-texec "$PHP_CONTAINER" composer "${OPERATION}" "${PACKAGE}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
+_run_composer
 echo ""
 
 # ── Step 3: Restore overlays (require/update only; leave disabled for remove) ─
