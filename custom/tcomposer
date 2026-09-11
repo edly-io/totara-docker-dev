@@ -18,6 +18,7 @@
 #   tcomposer php-8.4 remove edly-io/local_todo
 #   tcomposer php-8.3 require edly-io/local_todo:^1.0
 #   tcomposer php-8.4 update edly-io/local_todo
+#   tcomposer php-8.4 install                                   (site-wide; Composer only, no overlays)
 #   tcomposer php-8.4 require edly-io/local_todo:^1.0 --no-dev   (extra args passed through)
 #   tcomposer php-8.4 require monolog/monolog                   (Packagist: Composer only)
 #   tcomposer php remove edly-io/local_todo   (php / php-debug auto-picks a site-compatible container, same as texec, but its better to be explicit about the version of PHP)
@@ -37,11 +38,11 @@ OVERLAY_FILE="$script_path/totara-composer.yml"
 # ── Validate arguments ────────────────────────────────────────────────────────
 PHP_CONTAINER="${1:-}"
 OPERATION="${2:-}"
-PACKAGE="${3:-}"
 
-if [[ -z "$PHP_CONTAINER" || -z "$OPERATION" || -z "$PACKAGE" ]]; then
-    echo "Usage: tcomposer <php-container> <remove|require|update> <vendor/package> [extra composer args...]"
-    echo "       e.g. tcomposer php-8.4 remove edly-io/local_todo"
+if [[ -z "$PHP_CONTAINER" || -z "$OPERATION" ]]; then
+    echo "Usage: tcomposer <php-container> <install|require|remove|update> [vendor/package] [extra composer args...]"
+    echo "       e.g. tcomposer php-8.4 install"
+    echo "            tcomposer php-8.4 require edly-io/local_todo:^1.0"
     echo "       Must be run from within a Totara site directory."
     exit 1
 fi
@@ -51,7 +52,20 @@ if [[ "$PHP_CONTAINER" != php* ]]; then
     exit 1
 fi
 
-shift 3
+# require / remove / update operate on one package (and may need overlay handling).
+# install and other Composer commands have no package and never touch overlays.
+PACKAGE=""
+if [[ "$OPERATION" == "require" || "$OPERATION" == "remove" || "$OPERATION" == "update" ]]; then
+    PACKAGE="${3:-}"
+    if [[ -z "$PACKAGE" ]]; then
+        echo "Error: '${OPERATION}' requires a package argument (vendor/package)."
+        echo "       e.g. tcomposer php-8.4 ${OPERATION} edly-io/local_todo"
+        exit 1
+    fi
+    shift 3
+else
+    shift 2
+fi
 EXTRA_ARGS=("$@")   # any remaining args are passed straight through to Composer
 
 # ── Derive site name from current working directory ───────────────────────────
@@ -76,6 +90,22 @@ if [[ "$PHP_CONTAINER" == "php" || "$PHP_CONTAINER" == "php-debug" ]]; then
         PHP_CONTAINER="${php_container[0]}"
     fi
     echo "[tcomposer] Using PHP container: ${PHP_CONTAINER}"
+fi
+
+_run_composer() {
+    if [[ -n "$PACKAGE" ]]; then
+        texec "$PHP_CONTAINER" composer "${OPERATION}" "${PACKAGE}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
+    else
+        texec "$PHP_CONTAINER" composer "${OPERATION}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
+    fi
+}
+
+# Site-wide Composer commands (install, dump-autoload, …) never toggle overlays.
+if [[ -z "$PACKAGE" ]]; then
+    echo "[tcomposer] Running Composer only (${OPERATION})."
+    echo ""
+    _run_composer
+    exit $?
 fi
 
 # ── Containers that carry overlay volumes ─────────────────────────────────────
@@ -111,10 +141,6 @@ _recreate_containers() {
     echo "[tcomposer] Recreating containers: ${CONTAINERS[*]}"
     # tup detects the YAML change and recreates affected containers automatically.
     "$bin/tup" "${CONTAINERS[@]}"
-}
-
-_run_composer() {
-    texec "$PHP_CONTAINER" composer "${OPERATION}" "${PACKAGE}" "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}"
 }
 
 _abort() {
