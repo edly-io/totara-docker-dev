@@ -125,15 +125,45 @@ PLUGIN_NAME="${PLUGIN_NAME##*/}"
 PATTERN="totara-custom-plugins/${PLUGIN_NAME}[/:].*${SITE_NAME}"
 
 # ── Helper functions ──────────────────────────────────────────────────────────
-_comment_overlays() {
-    sed -i.bak "/${PATTERN}/s|^      - |      # - |" "$OVERLAY_FILE"
+# Use '#' as the sed address delimiter. '/' would terminate the address at
+# totara-custom-plugins/ and treat the next character as a sed command
+# (e.g. "invalid command code m" for mod_bigbluebuttonbn).
+
+_overlays_active() {
+    grep -qE "^[[:space:]]+- .*${PATTERN}" "$OVERLAY_FILE"
+}
+
+_sed_overlays() {
+    local from="$1"
+    local to="$2"
+    if ! sed -i.bak "\#${PATTERN}#s|^${from}|${to}|" "$OVERLAY_FILE"; then
+        rm -f "${OVERLAY_FILE}.bak"
+        echo "[tcomposer] Error: sed failed while updating overlays in:"
+        echo "            ${OVERLAY_FILE}"
+        return 1
+    fi
     rm -f "${OVERLAY_FILE}.bak"
+    return 0
+}
+
+_comment_overlays() {
+    if ! _sed_overlays '      - ' '      # - '; then
+        echo "[tcomposer] Aborting: overlays were not disabled. Composer will not run."
+        exit 1
+    fi
+    if _overlays_active; then
+        echo "[tcomposer] Error: overlay lines still active for '${PLUGIN_NAME}' in '${SITE_NAME}'."
+        echo "[tcomposer] Aborting: overlays were not disabled. Composer will not run."
+        exit 1
+    fi
     echo "[tcomposer] Overlays disabled  : '${PLUGIN_NAME}' in '${SITE_NAME}'"
 }
 
 _restore_overlays() {
-    sed -i.bak "/${PATTERN}/s|^      # - |      - |" "$OVERLAY_FILE"
-    rm -f "${OVERLAY_FILE}.bak"
+    if ! _sed_overlays '      # - ' '      - '; then
+        echo "[tcomposer] Error: failed to restore overlay lines in ${OVERLAY_FILE}"
+        return 1
+    fi
     echo "[tcomposer] Overlays restored  : '${PLUGIN_NAME}' in '${SITE_NAME}'"
 }
 
@@ -146,6 +176,7 @@ _recreate_containers() {
 _abort() {
     # Disable trap to prevent recursion if restore/recreate also errors.
     trap - ERR INT TERM
+    set +E
     echo ""
     echo "[tcomposer] Interrupted — restoring overlays and recreating containers..."
     _restore_overlays
@@ -162,9 +193,6 @@ if ! grep -q "$PATTERN" "$OVERLAY_FILE"; then
     exit $?
 fi
 
-# Overlay mounts exist for this plugin+site; restore them if Composer is interrupted.
-trap '_abort' ERR INT TERM
-
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "[tcomposer] PHP        : ${PHP_CONTAINER}"
@@ -173,8 +201,13 @@ echo "[tcomposer] Package    : ${PACKAGE}"
 echo "[tcomposer] Site       : ${SITE_NAME}"
 echo ""
 
-# ── Step 1: Disable overlays and recreate containers ─────────────────────────
+# ── Step 1: Disable overlays (must succeed before any recreate / Composer) ──
 _comment_overlays
+
+# Overlay mounts are now off; restore them if a later step is interrupted.
+set -E
+trap '_abort' ERR INT TERM
+
 _recreate_containers
 echo ""
 
@@ -193,5 +226,6 @@ else
 fi
 
 trap - ERR INT TERM
+set +E
 echo ""
 echo "[tcomposer] Done."
