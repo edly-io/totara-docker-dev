@@ -95,6 +95,18 @@ if ($DOCKER_DEV->behat_parallel) {
     $DOCKER_DEV->behat_host = 'selenium-chrome-debug-legacy';
 }
 
+// Totara core's adjust_for_behat() switches prefix/wwwroot/dataroot from their behat_* counterparts
+// but does not switch dbname for single-process (non-parallel) runs. Bridge that gap here:
+// override $CFG->dbname with $CFG->behat_dbname for CLI (BEHAT_UTIL / BEHAT_TEST) and
+// browser-driven behat sessions (BEHAT cookie), so behat tables land in the right database.
+if (!$DOCKER_DEV->behat_parallel
+    && !empty($CFG->behat_dbname)
+    && $CFG->behat_dbname !== $CFG->dbname
+    && (defined('BEHAT_UTIL') || defined('BEHAT_TEST') || !empty($_COOKIE['BEHAT']))
+) {
+    $CFG->dbname = $CFG->behat_dbname;
+}
+
 if ($DOCKER_DEV->major_version > 18) {
     // Behat profile needed for Totara 19+
     $CFG->behat_profiles['default'] = [
